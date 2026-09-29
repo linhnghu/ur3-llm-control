@@ -1,0 +1,9 @@
+# Replace with your real values before the demonstration.
+student_name: "YOUR NAME"
+student_id: "23020749"
+
+# For ID 23020749: P = 49 mod 6 = 1.
+zone_mapping:
+  zone_a: red_cube
+  zone_b: blue_cube
+  zone_c: yellow_cube

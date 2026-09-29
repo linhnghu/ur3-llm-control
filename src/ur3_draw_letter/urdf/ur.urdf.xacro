@@ -11,6 +11,8 @@
 
    <!-- parameters -->
    <xacro:arg name="tf_prefix" default="" />
+   <!-- Mount on the task table: top surface is at z=0.47 m. -->
+   <xacro:arg name="robot_mount_xyz" default="0.12 0 0.47" />
    <xacro:arg name="joint_limit_params" default="$(find ur_description)/config/$(arg ur_type)/joint_limits.yaml"/>
    <xacro:arg name="kinematics_params" default="$(find ur_description)/config/$(arg ur_type)/default_kinematics.yaml"/>
    <xacro:arg name="physical_params" default="$(find ur_description)/config/$(arg ur_type)/physical_parameters.yaml"/>
@@ -126,8 +128,69 @@
      ur_type="$(arg ur_type)"
      verify_robot_model="$(arg verify_robot_model)"
      >
-     <origin xyz="0 0 0" rpy="0 0 0" />          <!-- position robot in the world -->
+     <origin xyz="$(arg robot_mount_xyz)" rpy="0 0 0" />
    </xacro:ur_robot>
+
+   <!-- Simple parallel-jaw gripper attached to tool0. The two prismatic
+        joints move symmetrically and are commanded by gripper_controller. -->
+   <link name="gripper_base_link">
+     <inertial><origin xyz="0 0 0"/><mass value="0.12"/><inertia ixx="0.00004" ixy="0" ixz="0" iyy="0.00004" iyz="0" izz="0.00004"/></inertial>
+     <visual><origin xyz="0 0 -0.012"/><geometry><box size="0.055 0.055 0.024"/></geometry>
+       <material name="gripper_dark"><color rgba="0.18 0.20 0.22 1"/></material></visual>
+     <collision><origin xyz="0 0 -0.012"/><geometry><box size="0.055 0.055 0.024"/></geometry></collision>
+   </link>
+   <joint name="gripper_mount_joint" type="fixed">
+     <parent link="tool0"/><child link="gripper_base_link"/><origin xyz="0 0 0" rpy="0 0 0"/>
+   </joint>
+   <link name="left_finger_link">
+     <inertial><origin xyz="0 0 0.0175"/><mass value="0.04"/><inertia ixx="0.00002" ixy="0" ixz="0" iyy="0.00002" iyz="0" izz="0.000002"/></inertial>
+     <visual><origin xyz="0 0 0.0175"/><geometry><box size="0.012 0.014 0.035"/></geometry>
+       <material name="finger_metal"><color rgba="0.72 0.74 0.76 1"/></material></visual>
+     <collision><origin xyz="0 0 0.0175"/><geometry><box size="0.012 0.014 0.035"/></geometry></collision>
+   </link>
+   <joint name="left_finger_joint" type="prismatic">
+     <parent link="gripper_base_link"/><child link="left_finger_link"/>
+     <origin xyz="0 0.040 0" rpy="0 0 0"/><axis xyz="0 -1 0"/>
+     <limit lower="0" upper="0.034" effort="25" velocity="0.08"/>
+     <dynamics damping="1.0" friction="0.2"/>
+   </joint>
+   <link name="right_finger_link">
+     <inertial><origin xyz="0 0 0.0175"/><mass value="0.04"/><inertia ixx="0.00002" ixy="0" ixz="0" iyy="0.00002" iyz="0" izz="0.000002"/></inertial>
+     <visual><origin xyz="0 0 0.0175"/><geometry><box size="0.012 0.014 0.035"/></geometry>
+       <material name="finger_metal"><color rgba="0.72 0.74 0.76 1"/></material></visual>
+     <collision><origin xyz="0 0 0.0175"/><geometry><box size="0.012 0.014 0.035"/></geometry></collision>
+   </link>
+   <joint name="right_finger_joint" type="prismatic">
+     <parent link="gripper_base_link"/><child link="right_finger_link"/>
+     <origin xyz="0 -0.040 0" rpy="0 0 0"/><axis xyz="0 1 0"/>
+     <limit lower="0" upper="0.034" effort="25" velocity="0.08"/>
+     <dynamics damping="1.0" friction="0.2"/>
+   </joint>
+
+   <!-- The UR arm macro owns its own ros2_control system. This second system
+        exposes only the two gripper joints through the same Ignition manager. -->
+   <xacro:if value="$(arg sim_ignition)">
+     <ros2_control name="gripper_system" type="system">
+       <hardware><plugin>ign_ros2_control/IgnitionSystem</plugin></hardware>
+       <joint name="left_finger_joint">
+         <command_interface name="position"><param name="min">0</param><param name="max">0.034</param></command_interface>
+         <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+         <state_interface name="velocity"/>
+       </joint>
+       <joint name="right_finger_joint">
+         <command_interface name="position"><param name="min">0</param><param name="max">0.034</param></command_interface>
+         <state_interface name="position"><param name="initial_value">0.0</param></state_interface>
+         <state_interface name="velocity"/>
+       </joint>
+     </ros2_control>
+   </xacro:if>
+
+   <gazebo reference="left_finger_link">
+     <mu1>3.0</mu1><mu2>3.0</mu2><kp>1000000.0</kp><kd>100.0</kd>
+   </gazebo>
+   <gazebo reference="right_finger_link">
+     <mu1>3.0</mu1><mu2>3.0</mu2><kp>1000000.0</kp><kd>100.0</kd>
+   </gazebo>
 
    <xacro:if value="$(arg sim_gazebo)">
     <!-- Gazebo plugins -->
@@ -150,6 +213,35 @@
         <parameters>$(arg simulation_controllers)</parameters>
         <position_proportional_gain>0.5</position_proportional_gain>
         <controller_manager_node_name>$(arg tf_prefix)controller_manager</controller_manager_node_name>
+      </plugin>
+      <!-- tool0 is a fixed URDF frame and is lumped by Gazebo; wrist_3_link
+           is the actual physics link to which the grasped object is attached. -->
+      <plugin filename="ignition-gazebo-detachable-joint-system"
+              name="ignition::gazebo::systems::DetachableJoint">
+        <parent_link>wrist_3_link</parent_link>
+        <child_model>red_cube</child_model>
+        <child_link>link</child_link>
+        <attach_topic>/ur3_llm/grasp/red_cube/attach</attach_topic>
+        <detach_topic>/ur3_llm/grasp/red_cube/detach</detach_topic>
+        <output_topic>/ur3_llm/grasp/red_cube/state</output_topic>
+      </plugin>
+      <plugin filename="ignition-gazebo-detachable-joint-system"
+              name="ignition::gazebo::systems::DetachableJoint">
+        <parent_link>wrist_3_link</parent_link>
+        <child_model>yellow_cube</child_model>
+        <child_link>link</child_link>
+        <attach_topic>/ur3_llm/grasp/yellow_cube/attach</attach_topic>
+        <detach_topic>/ur3_llm/grasp/yellow_cube/detach</detach_topic>
+        <output_topic>/ur3_llm/grasp/yellow_cube/state</output_topic>
+      </plugin>
+      <plugin filename="ignition-gazebo-detachable-joint-system"
+              name="ignition::gazebo::systems::DetachableJoint">
+        <parent_link>wrist_3_link</parent_link>
+        <child_model>blue_cube</child_model>
+        <child_link>link</child_link>
+        <attach_topic>/ur3_llm/grasp/blue_cube/attach</attach_topic>
+        <detach_topic>/ur3_llm/grasp/blue_cube/detach</detach_topic>
+        <output_topic>/ur3_llm/grasp/blue_cube/state</output_topic>
       </plugin>
     </gazebo>
   </xacro:if>

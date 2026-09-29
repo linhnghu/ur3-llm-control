@@ -35,7 +35,7 @@ install(
 )
 
 install(
-  DIRECTORY urdf rviz
+  DIRECTORY urdf rviz srdf
   DESTINATION share/${PROJECT_NAME}
 )
 
